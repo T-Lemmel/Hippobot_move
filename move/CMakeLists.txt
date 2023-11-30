@@ -19,6 +19,12 @@ find_package(rclpy REQUIRED)
 add_executable(waypoint_publisher src/waypoint_publisher.cpp)
 ament_target_dependencies(waypoint_publisher rclcpp geometry_msgs)
 
+install(TARGETS
+    waypoint_publisher
+    DESTINATION lib/${PROJECT_NAME}
+)
+
+
 # Python scripts installation
 ament_python_install_package(${PROJECT_NAME})
 install(PROGRAMS scripts/place_frame.py scripts/tracker.py
@@ -28,4 +34,7 @@ install(PROGRAMS scripts/place_frame.py scripts/tracker.py
 install(DIRECTORY scripts/utm
         DESTINATION lib/${PROJECT_NAME})
 
+install(DIRECTORY launch
+        DESTINATION share/${PROJECT_NAME})
+        
 ament_package()

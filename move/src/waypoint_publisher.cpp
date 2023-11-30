@@ -11,7 +11,7 @@ int main(int argc, char **argv)
     while (rclcpp::ok()) {
         
         auto pose_message = geometry_msgs::msg::Pose();
-        pose_message.position.x = 100; // Replace with your desired x position
+        pose_message.position.x = -100; // Replace with your desired x position
         pose_message.position.y = -100; // Replace with your desired y position
 
         publisher->publish(pose_message);

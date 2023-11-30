@@ -129,7 +129,7 @@ class Place_frame(Node):
         self.get_logger().info("got past the init condition in ally")
         # adapt messages
         if len(self.allies) != len(msg.poses):
-            self.get_logger().info("creating waypoint object in self.allies")
+            #self.get_logger().info("creating waypoint object in self.allies")
             self.allies = [Waypoint(f'ally{i}') for i in range(len(msg.poses))]
 
         if not self.allies_is_init():
@@ -139,7 +139,6 @@ class Place_frame(Node):
         for i,pose in enumerate(msg.poses):
 
             self.allies[i].update(self.get_clock().now(), latitude = pose.position.x, longitude = pose.position.y, orientation= pose.orientation)
-            self.get_logger().info("ally x in gps = %f" %pose.position.x)
             msg = Int32()
             msg.data = len(self.allies)
             self.allies_amount_pub.publish(msg) # acts as a timer to keep publishing ally poses in tracker.py
@@ -167,7 +166,7 @@ class Place_frame(Node):
             return
 
         now = self.get_clock().now()
-        self.Boat.publish(now) #update the position of the boat tf2 frame
+        self.Boat.publish(now) #update the position of the boat tf2 frame, COMMENTED SO EKF CAN DO IT BETTER
             
         self.Waypoint.publish(now) #update the position of the waypoint tf2 frame
 

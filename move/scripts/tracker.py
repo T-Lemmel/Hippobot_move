@@ -10,10 +10,12 @@ from tf2_ros import TransformBroadcaster, TransformListener, TransformException,
 from ros_gz_interfaces.msg import ParamVec
 import utm
 import numpy as np
+import quaternion
 from copy import deepcopy
 from rcl_interfaces.msg import SetParametersResult
 from std_msgs.msg import Float64, Int32
 import math
+
 
 # THIS NODE CALCULATES ALL USEFULL POSITION IN THE WORLD FIXED FRAME USING TF2, PUBLISH THE ONES NEEDED IN OTHER NODES AND SENDS THE BOAT TO A WAYPOINT THROUGH PID CONTROL
 
@@ -45,6 +47,9 @@ class Tracker(Node):
     def __init__(self):
 
         super().__init__('tracker')
+        param = Parameter('use_sim_time', Parameter.Type.BOOL, True)
+        
+        self.set_parameters([param])
 
         #waypoint
         self.target = Target('waypoint')
@@ -84,11 +89,11 @@ class Tracker(Node):
 
         # control gains Aiming to work fine for waypoints at max pi/3 relative orientation to the boat 
         self.Kx = 75.
-        self.Kw = 0.7 #0.5 for heavy turblences
+        self.Kw = 0.1 #0.5 for heavy turblences
         self.Kxi = 10.0
-        self.Kwi = 0.000001 # 0.00005 for heavy turbulences 
+        self.Kwi = 0.00000  # 0.00005 for heavy turbulences 
         self.Kxd = 0.0 
-        self.Kwd = 0.1 # 0.5 for heavy turbulences
+        self.Kwd = 0.0 # 0.5 for heavy turbulences
 
         self.iterator_count =1
         self.buoy_pose_sum = Pose()
@@ -96,17 +101,21 @@ class Tracker(Node):
 
     def publish_allies_poses(self, msg: Int32):
         msg_pose = PoseArray()
-        for i in range(msg.data): #passes through all ally boats
-             #self.get_logger().info("looping through ally"), DEBUG PURPOSES
-             pose = Pose() # create a new Pose message
-             ally_pose = self.tf_buffer.lookup_transform(
+        try:
+            for i in range(msg.data): #passes through all ally boats
+                #self.get_logger().info("looping through ally"), DEBUG PURPOSES
+                pose = Pose() # create a new Pose message
+                ally_pose = self.tf_buffer.lookup_transform(
                         'world',
                         f'ally{i}',
                         rclpy.time.Time()).transform.translation
-             
-             pose.position.x, pose.position.y = ally_pose.x, ally_pose.y
-             msg_pose.poses.append(pose)
-             #self.get_logger().info("ally x in world = %f" %ally_pose.x), DEBUG PURPOSES
+                pose.position.x, pose.position.y = ally_pose.x, ally_pose.y
+                msg_pose.poses.append(pose)
+                #self.get_logger().info("ally x in world = %f" %ally_pose.x), DEBUG PURPOSES
+        except TransformException:
+            self.get_logger().info(
+                f'ally not found')
+            return
         
         self.allies_pub.publish(msg_pose)
 
@@ -117,34 +126,19 @@ class Tracker(Node):
     def publish_poses_and_control_loop(self): # GET ALL NECESSARY POSES IN WORLD FRAMES PUBLISH SOME
 
         try:
-            if ' ' in self.target.pose.header.frame_id:
-                # given as (x,y) in world frame
-                pose = self.tf_buffer.lookup_transform('world', me,
-                            rclpy.time.Time()).transform
-                x, y = map(float, self.target.split())
-                dx = x - pose.translation.x
-                dy = y - pose.translation.y
-                theta = 2*math.atan2(pose.rotation.z, pose.rotation.w)
-                c, s = math.cos(theta), math.sin(theta)
-
-                err = pose.translation
-                err.x = dx*c - dy*s
-                err.y = dx*s + dy*c 
-
-            else :
-                
-                if self.target.pose.header.frame_id == 'world':
-                        
-                    err_world_target = self.tf_buffer.lookup_transform(
-                        'world',
-                        self.target.pose.child_frame_id,
-                        rclpy.time.Time()).transform.translation
+            if self.target.pose.header.frame_id == 'world':
                     
                     err_world_boat = self.tf_buffer.lookup_transform(
                         'world',
                         me,
                         rclpy.time.Time()).transform.translation
                     
+                    boat_target = self.tf_buffer.lookup_transform(
+                        me,
+                        self.target.pose.child_frame_id,
+                        rclpy.time.Time()).transform.translation
+                    
+            
                     #publish boat position in world frame"
                     msg = Pose()
                     msg.position.x = err_world_boat.x
@@ -152,15 +146,7 @@ class Tracker(Node):
                     msg.position.y = err_world_boat.y
                     self.boat_y = msg.position.y #used to calculate the bouy X,Y position
                     self.boat_pos_pub.publish(msg)
-
-                    #calculate the error of postion from boat to target in world frame using chasles relation
-                    err = deepcopy(err_world_boat)
-                    err.x = err_world_target.x - err_world_boat.x
-                    err.y = err_world_target.y - err_world_boat.y 
-
-               
-        
-
+                
         except TransformException:
             self.get_logger().info(
                 f'Could not transform {me} to {self.target.pose.header.frame_id}')
@@ -175,12 +161,9 @@ class Tracker(Node):
             return
 
         msg = Float64()
-
-        theta_boat_target = math.atan2(err.y, err.x) #angle from boat to target in fixed world frame
-        error_angle = self.orientation.z - theta_boat_target #finding the right angle to PID control to 0 by taking into acount the boat's own orientation around itself
-        
+        error_angle = boat_to_target_yaw = -math.atan2(boat_target.y,boat_target.x)
         #debug purposes
-        #self.get_logger().info("error angle = %f" % error_angle) 
+        self.get_logger().info("error angle = %f" % error_angle) 
         msg.data = error_angle
         self.angle_error_pub.publish(msg)
 
@@ -191,12 +174,12 @@ class Tracker(Node):
         msg.data = angle = self.Kw*error_angle + self.Kwi*self.error_angle_integer + self.Kwd*self.error_angle_derivative #calculating control output value
         self.angle_pub.publish(msg) #publish to the thruster angle
 
-        error_distance = math.sqrt(err.x**2+err.y**2) - self.distance_to_keep #distance from boat to target in fixed world frame minus the desired distance to keep 
+        error_distance = math.sqrt(boat_target.x**2+boat_target.y**2) - self.distance_to_keep #distance from boat to target in fixed world frame minus the desired distance to keep 
 
         #debug purposes
-        self.get_logger().info("distance = %f" % error_distance)
-        #self.get_logger().info("error x = %f" % err.x)
-        #self.get_logger().info("error y = %f" % err.y)
+        #self.get_logger().info("distance = %f" % error_distance)
+        self.get_logger().info("error x = %f" % boat_target.x)
+        self.get_logger().info("error y = %f" % boat_target.y)
 
         # calculating buoy pose and attempting to work around noise with mobile average
         new_buoy_pos = self.tf_buffer.lookup_transform(
@@ -221,13 +204,12 @@ class Tracker(Node):
 
         if abs(error_angle)>0.4 :
             msg.data = clamp(msg.data, 1000.0)
+        elif abs(error_angle)>0.3 :
+            msg.data = clamp(msg.data, 9000.0)
         elif abs(error_angle)>0.2 :
             msg.data = clamp(msg.data, 6000.0)
         else : 
             msg.data = clamp(msg.data, 12000.0)
-        """ elif abs(error_angle)>0.1 :
-            msg.data = clamp(msg.data, 9000.0) """
-        
 
         #in cause we went too far, stop the thruster and reset integral error
         if error_distance < 0 :
