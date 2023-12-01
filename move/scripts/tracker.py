@@ -63,8 +63,6 @@ class Tracker(Node):
 
         self.angle_error_pub = self.create_publisher(Float64, 'angle/error', 10) #publisher for the angle that need to be controled to 0 in order ta align with waypoint, debug purposes
 
-        self.boat_x = 0.0
-        self.boat_y = 0.0
         self.boat_pos_pub = self.create_publisher(Pose, 'boat_pose', 10) #boat position in world frame, used in other nodes"""
 
         self.allies_pub = self.create_publisher(PoseArray, 'allies/pos/world_frame',10)
@@ -82,10 +80,7 @@ class Tracker(Node):
         self.error_angle_derivative = 0.0
         self.error_distance_integer = 0.0
         self.error_distance_derivative = 0.0
-        self.distance_to_keep = 0.0 #desired distance to keep with target
-
-        self.orientation = Quaternion()#relative orientation of boat frame to fixed world frame (quaternions) 
-        self.imu_sub = self.create_subscription(Imu, '/wamv/sensors/imu/imu/data', self.update_orientation, 10)
+        self.distance_to_keep = 0.0 #desired distance to keep with target, would have been a subsriber ideally
 
         # control gains Aiming to work fine for waypoints at max pi/3 relative orientation to the boat 
         self.Kx = 75.
@@ -120,15 +115,12 @@ class Tracker(Node):
         self.allies_pub.publish(msg_pose)
 
 
-    def update_orientation(self, msg: Imu):
-        self.orientation = msg.orientation
-
     def publish_poses_and_control_loop(self): # GET ALL NECESSARY POSES IN WORLD FRAMES PUBLISH SOME
 
         try:
             if self.target.pose.header.frame_id == 'world':
                     
-                    err_world_boat = self.tf_buffer.lookup_transform(
+                    world_boat = self.tf_buffer.lookup_transform(
                         'world',
                         me,
                         rclpy.time.Time()).transform.translation
@@ -141,10 +133,8 @@ class Tracker(Node):
             
                     #publish boat position in world frame"
                     msg = Pose()
-                    msg.position.x = err_world_boat.x
-                    self.boat_x = msg.position.x #used to calculate the bouy X,Y position
-                    msg.position.y = err_world_boat.y
-                    self.boat_y = msg.position.y #used to calculate the bouy X,Y position
+                    msg.position.x = world_boat.x
+                    msg.position.y = world_boat.y
                     self.boat_pos_pub.publish(msg)
                 
         except TransformException:
